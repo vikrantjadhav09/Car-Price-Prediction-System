@@ -9,6 +9,5 @@ __pycache__/
 venv
 
 
-*.joblib
 
 .DS_Store
