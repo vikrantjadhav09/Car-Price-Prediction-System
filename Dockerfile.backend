@@ -2,15 +2,27 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Prevent Python from creating .pyc files
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Prevent Python output buffering
+ENV PYTHONUNBUFFERED=1
+
+# Install dependencies
 COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy backend application
 COPY Backend ./Backend
+
+# Copy trained ML model
 COPY model ./model
+
+# Copy dataset if required by backend
 COPY Data ./Data
 
-EXPOSE 8000
+# Render provides PORT dynamically
+EXPOSE 10000
 
-CMD ["uvicorn", "Backend.app:app", "--host", "0.0.0.0", "--port", "8000"]
-
+CMD ["sh", "-c", "uvicorn Backend.app:app --host 0.0.0.0 --port ${PORT:-8000}"]
