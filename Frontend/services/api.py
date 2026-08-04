@@ -4,24 +4,39 @@ API Service Layer
 AI Powered Car Price Prediction System
 ---------------------------------------------------------
 Handles all communication between Streamlit and FastAPI.
+
+Works in:
+
+1. Local Development
+   http://127.0.0.1:8000
+
+2. Docker
+   http://backend:8000
+
+The backend URL is automatically selected using
+the BACKEND_URL environment variable.
 =========================================================
 """
 
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 import requests
+
 
 # =========================================================
 # CONFIGURATION
 # =========================================================
 
-API_HOST = "127.0.0.1"
-API_PORT = 8000
+DEFAULT_BACKEND_URL = "http://127.0.0.1:8000"
 
-BASE_URL = f"http://{API_HOST}:{API_PORT}"
+BACKEND_URL = os.getenv(
+    "BACKEND_URL",
+    DEFAULT_BACKEND_URL
+).rstrip("/")
 
 TIMEOUT = 30
 
@@ -44,17 +59,16 @@ logger = logging.getLogger(__name__)
 
 class APIClient:
     """
-    Reusable API Client
+    Centralized client for communicating with FastAPI.
     """
 
     def __init__(
         self,
-        base_url: str = BASE_URL,
+        base_url: str = BACKEND_URL,
         timeout: int = TIMEOUT,
     ):
 
         self.base_url = base_url.rstrip("/")
-
         self.timeout = timeout
 
         self.session = requests.Session()
@@ -66,25 +80,40 @@ class APIClient:
             }
         )
 
+        logger.info(
+            f"API Client initialized → {self.base_url}"
+        )
+
     # =====================================================
-    # URL
+    # URL BUILDER
     # =====================================================
 
-    def url(self, endpoint: str):
+    def url(self, endpoint: str) -> str:
+        """
+        Build complete API URL.
+
+        Example:
+
+        endpoint = "/predict"
+
+        result:
+
+        http://backend:8000/predict
+        """
 
         endpoint = endpoint.lstrip("/")
 
         return f"{self.base_url}/{endpoint}"
 
     # =====================================================
-    # GET
+    # GET REQUEST
     # =====================================================
 
     def get(
         self,
         endpoint: str,
-        params: dict | None = None,
-    ) -> dict:
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
 
         try:
 
@@ -100,27 +129,45 @@ class APIClient:
 
         except requests.exceptions.RequestException as e:
 
-            logger.error(e)
+            logger.error(
+                f"GET {endpoint} failed: {e}"
+            )
 
             return {
-
                 "success": False,
+                "message": str(e),
+            }
 
-                "message": str(e)
+        except ValueError as e:
 
+            logger.error(
+                f"Invalid JSON response from {endpoint}: {e}"
+            )
+
+            return {
+                "success": False,
+                "message": "Invalid response received from backend.",
             }
 
     # =====================================================
-    # POST
+    # POST REQUEST
     # =====================================================
 
     def post(
         self,
         endpoint: str,
-        payload: dict,
-    ) -> dict:
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
 
         try:
+
+            logger.info(
+                f"POST {endpoint}"
+            )
+
+            logger.debug(
+                f"Payload: {payload}"
+            )
 
             response = self.session.post(
                 self.url(endpoint),
@@ -130,61 +177,159 @@ class APIClient:
 
             response.raise_for_status()
 
+            result = response.json()
+
+            logger.info(
+                f"POST {endpoint} → {response.status_code}"
+            )
+
+            return result
+
+        except requests.exceptions.RequestException as e:
+
+            logger.error(
+                f"POST {endpoint} failed: {e}"
+            )
+
+            return {
+                "success": False,
+                "message": str(e),
+            }
+
+        except ValueError:
+
+            logger.error(
+                f"Invalid JSON response from {endpoint}"
+            )
+
+            return {
+                "success": False,
+                "message": "Invalid response received from backend.",
+            }
+
+    # =====================================================
+    # DELETE REQUEST
+    # =====================================================
+
+    def delete(
+        self,
+        endpoint: str,
+    ) -> dict[str, Any]:
+
+        try:
+
+            response = self.session.delete(
+                self.url(endpoint),
+                timeout=self.timeout,
+            )
+
+            response.raise_for_status()
+
             return response.json()
 
         except requests.exceptions.RequestException as e:
 
-            logger.error(e)
+            logger.error(
+                f"DELETE {endpoint} failed: {e}"
+            )
 
             return {
-
                 "success": False,
-
-                "message": str(e)
-
+                "message": str(e),
             }
 
-    # =====================================================
-    # HEALTH CHECK
-    # =====================================================
+        except ValueError:
 
-    def health(self):
-
-        return self.get("/health")
-
-    # =====================================================
-    # MODEL INFO
-    # =====================================================
-
-    def model_info(self):
-
-        return self.get("/model/info")
-
-    # =====================================================
-    # VERSION
-    # =====================================================
-
-    def version(self):
-
-        return self.get("/version")
+            return {
+                "success": False,
+                "message": "Invalid response received from backend.",
+            }
 
     # =====================================================
     # ROOT
     # =====================================================
 
-    def root(self):
+    def root(self) -> dict[str, Any]:
+        """
+        Check FastAPI root endpoint.
+        """
 
         return self.get("/")
 
     # =====================================================
-    # PREDICT
+    # PING
     # =====================================================
 
-    def predict(self, features: dict) -> dict:
+    def ping(self) -> bool:
+        """
+        Check whether backend is online.
+        """
+
+        try:
+
+            response = self.session.get(
+                self.url("/"),
+                timeout=5,
+            )
+
+            return response.status_code == 200
+
+        except requests.exceptions.RequestException:
+
+            return False
+
+    # =====================================================
+    # HEALTH
+    # =====================================================
+
+    def health(self) -> dict[str, Any]:
+        """
+        Backend health check.
+        """
+
+        return self.get("/health")
+
+    # =====================================================
+    # VERSION
+    # =====================================================
+
+    def version(self) -> dict[str, Any]:
+        """
+        Get backend version.
+
+        Note:
+        This endpoint must exist in FastAPI.
+        """
+
+        return self.get("/version")
+
+    # =====================================================
+    # MODEL INFO
+    # =====================================================
+
+    def model_info(self) -> dict[str, Any]:
+        """
+        Get ML model information.
+
+        Note:
+        This endpoint must exist in FastAPI.
+        """
+
+        return self.get("/model/info")
+
+    # =====================================================
+    # PREDICTION
+    # =====================================================
+
+    def predict(
+        self,
+        features: dict[str, Any],
+    ) -> dict[str, Any]:
         """
         Predict car price.
 
         Example:
+
         {
             "company": "Hyundai",
             "model": "i20",
@@ -196,7 +341,7 @@ class APIClient:
 
         return self.post(
             "/predict",
-            features
+            features,
         )
 
     # =====================================================
@@ -205,10 +350,13 @@ class APIClient:
 
     def batch_predict(
         self,
-        records: list[dict],
-    ) -> dict:
+        records: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         """
-        Predict multiple cars.
+        Predict prices for multiple vehicles.
+
+        Note:
+        This endpoint must exist in FastAPI.
         """
 
         payload = {
@@ -217,16 +365,19 @@ class APIClient:
 
         return self.post(
             "/predict/batch",
-            payload
+            payload,
         )
 
     # =====================================================
     # DATASET INFORMATION
     # =====================================================
 
-    def dataset_info(self) -> dict:
+    def dataset_info(self) -> dict[str, Any]:
         """
-        Dataset statistics.
+        Get dataset statistics.
+
+        Note:
+        This endpoint must exist in FastAPI.
         """
 
         return self.get(
@@ -240,25 +391,31 @@ class APIClient:
     def dataset_sample(
         self,
         rows: int = 10,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """
-        Sample rows from dataset.
+        Get sample rows from dataset.
+
+        Note:
+        This endpoint must exist in FastAPI.
         """
 
         return self.get(
             "/dataset/sample",
             {
                 "rows": rows
-            }
+            },
         )
 
     # =====================================================
-    # AVAILABLE BRANDS
+    # COMPANIES
     # =====================================================
 
-    def companies(self):
+    def companies(self) -> dict[str, Any]:
         """
-        Get available companies.
+        Get available car companies.
+
+        Note:
+        This endpoint must exist in FastAPI.
         """
 
         return self.get(
@@ -266,31 +423,37 @@ class APIClient:
         )
 
     # =====================================================
-    # CAR MODELS
+    # MODELS
     # =====================================================
 
     def models(
         self,
         company: str,
-    ):
+    ) -> dict[str, Any]:
         """
-        Get models for a company.
+        Get available models for a company.
+
+        Note:
+        This endpoint must exist in FastAPI.
         """
 
         return self.get(
             "/models",
             {
                 "company": company
-            }
+            },
         )
 
     # =====================================================
     # FUEL TYPES
     # =====================================================
 
-    def fuel_types(self):
+    def fuel_types(self) -> dict[str, Any]:
         """
-        Available fuel types.
+        Get available fuel types.
+
+        Note:
+        This endpoint must exist in FastAPI.
         """
 
         return self.get(
@@ -301,9 +464,12 @@ class APIClient:
     # YEARS
     # =====================================================
 
-    def years(self):
+    def years(self) -> dict[str, Any]:
         """
-        Manufacturing years.
+        Get available manufacturing years.
+
+        Note:
+        This endpoint must exist in FastAPI.
         """
 
         return self.get(
@@ -317,16 +483,19 @@ class APIClient:
     def prediction_history(
         self,
         limit: int = 100,
-    ):
+    ) -> dict[str, Any]:
         """
-        Prediction history.
+        Get prediction history.
+
+        Note:
+        This endpoint must exist in FastAPI.
         """
 
         return self.get(
             "/history",
             {
                 "limit": limit
-            }
+            },
         )
 
     # =====================================================
@@ -336,9 +505,12 @@ class APIClient:
     def history_by_id(
         self,
         prediction_id: int,
-    ):
+    ) -> dict[str, Any]:
         """
-        Get one prediction.
+        Get a single prediction history record.
+
+        Note:
+        This endpoint must exist in FastAPI.
         """
 
         return self.get(
@@ -346,95 +518,62 @@ class APIClient:
         )
 
     # =====================================================
-    # DELETE HISTORY
+    # DELETE HISTORY RECORD
     # =====================================================
 
     def delete_prediction(
         self,
         prediction_id: int,
-    ):
+    ) -> dict[str, Any]:
         """
-        Delete one prediction.
+        Delete one prediction history record.
+
+        Note:
+        This endpoint must exist in FastAPI.
         """
 
-        try:
-
-            response = self.session.delete(
-                self.url(
-                    f"/history/{prediction_id}"
-                ),
-                timeout=self.timeout,
-            )
-
-            response.raise_for_status()
-
-            return response.json()
-
-        except requests.exceptions.RequestException as e:
-
-            logger.error(e)
-
-            return {
-
-                "success": False,
-
-                "message": str(e)
-
-            }
+        return self.delete(
+            f"/history/{prediction_id}"
+        )
 
     # =====================================================
     # CLEAR HISTORY
     # =====================================================
 
-    def clear_history(self):
+    def clear_history(self) -> dict[str, Any]:
         """
-        Delete all predictions.
+        Delete all prediction history.
+
+        Note:
+        This endpoint must exist in FastAPI.
+        """
+
+        return self.delete(
+            "/history"
+        )
+
+    # =====================================================
+    # CLOSE SESSION
+    # =====================================================
+
+    def close(self):
+        """
+        Close HTTP session.
         """
 
         try:
 
-            response = self.session.delete(
-                self.url("/history"),
-                timeout=self.timeout,
+            self.session.close()
+
+            logger.info(
+                "API session closed."
             )
 
-            response.raise_for_status()
+        except Exception as e:
 
-            return response.json()
-
-        except requests.exceptions.RequestException as e:
-
-            logger.error(e)
-
-            return {
-
-                "success": False,
-
-                "message": str(e)
-
-            }
-
-    # =====================================================
-    # API PING
-    # =====================================================
-
-    def ping(self):
-        """
-        Quick connectivity check.
-        """
-
-        try:
-
-            response = self.session.get(
-                self.url("/"),
-                timeout=5,
+            logger.error(
+                f"Error closing API session: {e}"
             )
-
-            return response.status_code == 200
-
-        except Exception:
-
-            return False
 
 
 # =========================================================
@@ -442,17 +581,26 @@ class APIClient:
 # =========================================================
 
 class APIError(Exception):
-    """Base API exception."""
+    """
+    Base API exception.
+    """
+
     pass
 
 
 class ConnectionError(APIError):
-    """Connection failed."""
+    """
+    Backend connection error.
+    """
+
     pass
 
 
 class PredictionError(APIError):
-    """Prediction failed."""
+    """
+    Prediction error.
+    """
+
     pass
 
 
@@ -460,73 +608,129 @@ class PredictionError(APIError):
 # RESPONSE HELPERS
 # =========================================================
 
-def is_success(response: dict) -> bool:
+def is_success(
+    response: dict[str, Any],
+) -> bool:
     """
-    Returns True if API call succeeded.
+    Check whether API response was successful.
     """
 
     if not isinstance(response, dict):
+
         return False
 
-    return response.get("success", False)
+    return response.get(
+        "success",
+        False
+    )
 
 
-def get_message(response: dict) -> str:
+def get_message(
+    response: dict[str, Any],
+) -> str:
     """
-    Extract response message.
+    Extract message from API response.
     """
 
     if not isinstance(response, dict):
+
         return "Invalid response."
 
-    return response.get("message", "")
+    return response.get(
+        "message",
+        ""
+    )
 
 
-def get_data(response: dict):
+def get_data(
+    response: dict[str, Any],
+):
     """
-    Extract response data.
+    Extract data from API response.
+
+    Supports both:
+
+    {
+        "data": {...}
+    }
+
+    and direct API responses.
     """
 
     if not isinstance(response, dict):
+
         return None
 
-    return response.get("data")
+    return response.get(
+        "data"
+    )
 
 
 # =========================================================
-# HEALTH CHECK
+# BACKEND STATUS
 # =========================================================
 
 def is_backend_online() -> bool:
     """
-    Check backend availability.
+    Check whether FastAPI backend is available.
     """
 
-    try:
-
-        return api.ping()
-
-    except Exception:
-
-        return False
+    return api.ping()
 
 
 # =========================================================
-# UPDATE CONFIGURATION
+# API INFORMATION
+# =========================================================
+
+def api_information() -> dict[str, Any]:
+    """
+    Return current API configuration.
+    """
+
+    return {
+        "base_url": api.base_url,
+        "timeout": api.timeout,
+        "headers": dict(
+            api.session.headers
+        ),
+    }
+
+
+# =========================================================
+# CHANGE BASE URL
 # =========================================================
 
 def set_base_url(
     host: str,
-    port: int,
+    port: int = 8000,
 ):
     """
-    Update API host dynamically.
+    Dynamically change backend URL.
+
+    Example:
+
+    set_base_url(
+        "127.0.0.1",
+        8000
+    )
+
+    or
+
+    set_base_url(
+        "backend",
+        8000
+    )
     """
 
     global api
 
+    new_url = f"http://{host}:{port}"
+
+    api.close()
+
     api = APIClient(
-        base_url=f"http://{host}:{port}"
+        base_url=new_url,
+        timeout=TIMEOUT,
     )
 
     logger.info(
@@ -535,52 +739,35 @@ def set_base_url(
 
 
 # =========================================================
-# API INFORMATION
-# =========================================================
-
-def api_information():
-    """
-    Basic client information.
-    """
-
-    return {
-
-        "base_url": api.base_url,
-
-        "timeout": api.timeout,
-
-        "headers": dict(api.session.headers)
-
-    }
-
-
-# =========================================================
-# CLOSE SESSION
-# =========================================================
-
-def close():
-    """
-    Close HTTP session.
-    """
-
-    try:
-
-        api.session.close()
-
-        logger.info(
-            "HTTP session closed."
-        )
-
-    except Exception as e:
-
-        logger.error(e)
-
-
-# =========================================================
-# SINGLETON INSTANCE
+# SINGLETON API INSTANCE
 # =========================================================
 
 api = APIClient()
+
+
+# =========================================================
+# STARTUP INFORMATION
+# =========================================================
+
+logger.info(
+    "=================================================="
+)
+
+logger.info(
+    "AI Powered Car Price Prediction API Client"
+)
+
+logger.info(
+    f"Backend URL → {api.base_url}"
+)
+
+logger.info(
+    f"Timeout → {api.timeout}s"
+)
+
+logger.info(
+    "=================================================="
+)
 
 
 # =========================================================
@@ -591,39 +778,44 @@ if __name__ == "__main__":
 
     print("=" * 60)
 
-    print("AI Powered Car Price Prediction")
+    print(
+        "AI Powered Car Price Prediction"
+    )
 
     print("=" * 60)
 
     print()
 
-    print("Backend Online : ", api.ping())
+    print(
+        "Backend URL :",
+        api.base_url
+    )
 
-    print("Health : ")
-
-    print(api.health())
-
-    print()
-
-    print("Version : ")
-
-    print(api.version())
+    print(
+        "Backend Online :",
+        api.ping()
+    )
 
     print()
 
-    print("Model Info : ")
+    print(
+        "Root Response :"
+    )
 
-    print(api.model_info())
-
-    print()
-
-    print("Configuration")
-
-    print(api_information())
+    print(
+        api.root()
+    )
 
     print()
 
-    close()
+    print(
+        "API Information :"
+    )
 
+    print(
+        api_information()
+    )
 
+    print()
 
+    api.close()

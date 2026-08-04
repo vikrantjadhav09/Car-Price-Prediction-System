@@ -20,3 +20,16 @@ EDA.ipynb
 Images
 
 README.md
+
+
+###########################
+
+venv/
+__pycache__/
+*.pyc
+.git/
+.github/
+.ipynb_checkpoints/
+.env
+.streamlit/secrets.toml
+*.log
